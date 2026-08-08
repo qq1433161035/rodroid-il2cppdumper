@@ -1,49 +1,87 @@
-# .github/workflows/build-cli-armv7.yml
-name: Build CLI for Android ARMv7
+name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  NDK_VERSION: r26d
+  NDK_VERSION: 26.3.11579264
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        target: armv7-linux-androideabi
-        override: true
-        components: rust-src  # برای build-std در صورت نیاز
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-    - name: Install Android NDK
-      run: |
-        wget https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
-        unzip android-ndk-${NDK_VERSION}-linux.zip
-        echo "ANDROID_NDK_HOME=${{ github.workspace }}/android-ndk-${NDK_VERSION}" >> $GITHUB_ENV
-        echo "${{ github.workspace }}/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: |
+            aarch64-linux-android
+            armv7-linux-androideabi
+            x86_64-linux-android
 
-    - name: Install cargo-ndk
-      run: cargo install cargo-ndk
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-    - name: Build for armv7 using cargo-ndk
-      run: |
-        cd src-tauri
-        cargo ndk --target armv7-linux-androideabi --platform 21 -- build --release
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Upload artifact (CLI)
-      uses: actions/upload-artifact@v4
-      with:
-        name: il2cpp_dumper-cli-armv7
-        path: src-tauri/target/armv7-linux-androideabi/release/il2cpp_dumper
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+          sdkmanager "ndk;${NDK_VERSION}"
+
+      - name: Configure Android environment
+        run: |
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: npm install
+
+      - name: Initialize Tauri Android project
+        run: |
+          npx tauri android init
+
+      - name: Build Android APK
+        run: |
+          npx tauri android build --apk --target aarch64
+
+      - name: Find generated APK
+        run: |
+          find src-tauri/gen/android/app/build/outputs/apk \
+            -type f \
+            -name "*.apk" \
+            -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rodroid-il2cppdumper-android-arm64-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
